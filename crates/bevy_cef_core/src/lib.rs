@@ -7,6 +7,8 @@ mod error;
 
 pub mod custom_scheme;
 mod macros;
+#[cfg(all(target_os = "linux", target_env = "gnu", feature = "browser"))]
+pub mod mallinfo;
 mod render_process;
 mod util;
 

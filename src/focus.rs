@@ -5,7 +5,6 @@
 //! IME reach only the focused webview.
 
 use crate::common::WebviewSource;
-use crate::system_param::pointer::find_webview_entity;
 use bevy::prelude::*;
 use bevy_cef_core::prelude::Browsers;
 
@@ -25,6 +24,21 @@ impl Plugin for FocusPlugin {
         app.init_resource::<FocusedWebview>()
             .add_systems(Update, (setup_focus_observers, apply_webview_focus));
     }
+}
+
+/// The webview `entity` belongs to: itself, or its nearest `WebviewSource` ancestor.
+pub(crate) fn find_webview_entity(
+    entity: Entity,
+    parents: &Query<(Option<&ChildOf>, Has<WebviewSource>)>,
+) -> Option<Entity> {
+    let (child_of, has_webview) = parents.get(entity).ok()?;
+    if has_webview {
+        return Some(entity);
+    }
+    if let Some(parent) = child_of {
+        return find_webview_entity(parent.0, parents);
+    }
+    None
 }
 
 fn setup_focus_observers(mut commands: Commands, webviews: Query<Entity, Added<WebviewSource>>) {

@@ -13,7 +13,6 @@ categories.workspace = true
 
 [dependencies]
 bevy = { workspace = true, optional = true }
-bevy_remote = { workspace = true, optional = true }
 cef = { workspace = true }
 cef-dll-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -39,14 +38,11 @@ log = ["dep:bevy", "bevy/bevy_log"]
 # render-process binaries, which then depend on no Bevy crate.
 browser = [
     "dep:bevy",
-    "dep:bevy_remote",
     "dep:async-channel",
     "dep:raw-window-handle",
     "dep:thiserror",
     "bevy/bevy_asset",
     "bevy/bevy_log",
-    "bevy/bevy_pbr",
-    "bevy/bevy_sprite",
     "bevy/bevy_window",
     "bevy/picking",
     "dep:objc",
@@ -56,6 +52,9 @@ browser = [
     "dep:objc2-io-surface",
     "dep:wgpu",
 ]
+
+# The page-JS -> Bevy Remote Protocol bridge (`window.cef.brp`).
+brp = ["browser", "bevy/bevy_remote"]
 
 # Used only by `browser_process::accelerated_paint` (macOS GPU OSR), so they are
 # optional and activated by the `browser` feature — the render-process subprocess

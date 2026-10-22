@@ -4,7 +4,7 @@ use crate::render_process::render_process_handler::{BrpReply, BrpReplyError};
 use crate::util::IntoString;
 use async_channel::Sender;
 use bevy::tasks::IoTaskPool;
-use bevy_remote::{BrpError, BrpMessage, BrpRequest};
+use bevy::remote::{BrpError, BrpMessage, BrpRequest};
 use cef::{
     Browser, Frame, ImplFrame, ImplListValue, ImplProcessMessage, ListValue, ProcessId,
     process_message_create,
@@ -80,14 +80,14 @@ impl From<BrpError> for BrpReplyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy_remote::BrpResult;
+    use bevy::remote::BrpResult;
     use serde_json::json;
 
     /// Asserts that a host result mapped into a [`BrpReply`] serializes to exactly the JSON of
-    /// the `bevy_remote::BrpResult` it came from.
+    /// the `bevy::remote::BrpResult` it came from.
     ///
     /// Case: a 0.15.0 host answers a render process installed from 0.14.0, which decodes the
-    /// payload as `bevy_remote::BrpResult`.
+    /// payload as `bevy::remote::BrpResult`.
     #[test]
     fn mapped_reply_serializes_like_bevy_remote() {
         let results: [BrpResult; 3] = [

@@ -3,9 +3,7 @@ use crate::common::WebviewCoreComponentsPlugin;
 use crate::common::ipc::js_emit::IpcRawEventPlugin;
 use crate::focus::FocusedWebview;
 use crate::keyboard::CefKeyboardFilter;
-use crate::prelude::{
-    BeginFrameInterval, WebviewExtendStandardMaterial, WebviewMaterial, WebviewUiMaterial,
-};
+use crate::prelude::BeginFrameInterval;
 use bevy::ecs::system::ScheduleSystem;
 use bevy::prelude::*;
 use bevy_cef_core::prelude::*;
@@ -221,10 +219,7 @@ pub(crate) fn add_failed_startup(app: &mut App, error: CefStartupError, root: Op
     // NOTE: `init_asset` panics without an `AssetServer`; the skipped plugins assume
     // `AssetPlugin` as well, but a failed start must not add a second panic.
     if app.world().contains_resource::<AssetServer>() {
-        app.init_asset::<WebviewMaterial>()
-            .init_asset::<WebviewExtendStandardMaterial>()
-            .init_asset::<WebviewUiMaterial>()
-            .init_asset::<CefResponse>();
+        app.init_asset::<CefResponse>();
     }
 }
 
@@ -607,8 +602,6 @@ mod tests {
     #[test]
     fn a_failed_start_keeps_example_startup_systems_running() {
         fn setup(
-            _materials: ResMut<Assets<WebviewExtendStandardMaterial>>,
-            _ui_materials: ResMut<Assets<WebviewUiMaterial>>,
             _filter: Res<CefKeyboardFilter>,
             _interval: Res<BeginFrameInterval>,
             _marker: NonSend<RunOnMainThread>,

@@ -42,8 +42,8 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 # The release render process depends on no Bevy crate; the debug one pulls Bevy
 # only through `bevy_cef_core/log` (`bevy` with `bevy_log`). The browser-side library and
 # top-level crate light up renderer features.
-bevy = { version = "0.20", default-features = false }
-bevy_remote = "0.20"
+# By git: a host on bevy main (or a fork of it, patched over this URL) shares one bevy.
+bevy = { git = "https://github.com/bevyengine/bevy", branch = "main", default-features = false }
 cef = { version = "=154.5.0+154.0.34" }
 cef-dll-sys = { version = "=154.5.0+154.0.34", features = ["sandbox"] }
 bevy_cef = { path = ".", version = "0.15.0" }
@@ -58,10 +58,10 @@ anyhow = "1"
 plist = "1"
 
 [dependencies]
-bevy = { workspace = true, features = ["bevy_winit", "bevy_ui_render"] }
-bevy_remote = { workspace = true }
+bevy = { workspace = true, features = ["bevy_winit", "bevy_ui", "picking"] }
 cef = { workspace = true }
 bevy_cef_core = { workspace = true, features = ["browser"] }
+wgpu-types = { version = "30", default-features = false }
 async-channel = { version = "2.5" }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -93,6 +93,9 @@ workspace = true
 
 [features]
 default = []
+# Pages reach the Bevy Remote Protocol through `window.cef.brp`; adds `RemotePlugin`. Off by
+# default: page content is untrusted.
+brp = ["bevy/bevy_remote", "bevy_cef_core/brp"]
 serialize = ["bevy/serialize"]
 debug = ["bevy_cef_core/debug", "log"]
 log = ["bevy_cef_core/log"]

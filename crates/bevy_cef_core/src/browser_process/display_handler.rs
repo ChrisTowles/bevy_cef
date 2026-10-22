@@ -1,5 +1,5 @@
 use async_channel::Sender;
-use bevy::log::{error, info, trace, warn};
+use bevy::log::debug;
 use bevy::prelude::Entity;
 use bevy::window::SystemCursorIcon;
 use cef::rc::{ConvertParam, Rc, RcImpl};
@@ -99,25 +99,18 @@ impl ImplDisplayHandler for DisplayHandlerBuilder {
         source: Option<&CefString>,
         line: c_int,
     ) -> c_int {
-        let message = format!(
-            "{}\nline:{line}\n{}",
-            source.map(|s| s.to_string()).unwrap_or_default(),
-            message.map(|m| m.to_string()).unwrap_or_default()
-        );
-        match level.into_raw() {
-            cef_log_severity_t::LOGSEVERITY_ERROR => {
-                error!("{message}");
-            }
-            cef_log_severity_t::LOGSEVERITY_WARNING => {
-                warn!("{message}");
-            }
-            cef_log_severity_t::LOGSEVERITY_VERBOSE => {
-                trace!("{message}");
-            }
-            _ => {
-                info!("{message}");
-            }
-        }
+        // A page's console is the page's business (sites log errors freely): debug, one line,
+        // its source cut short (an inline page's source is all of its markup).
+        let source = source.map(|s| s.to_string()).unwrap_or_default();
+        let source: String = source.chars().take(80).collect();
+        let message = message.map(|m| m.to_string()).unwrap_or_default();
+        let level = match level.into_raw() {
+            cef_log_severity_t::LOGSEVERITY_ERROR => "error",
+            cef_log_severity_t::LOGSEVERITY_WARNING => "warning",
+            cef_log_severity_t::LOGSEVERITY_VERBOSE => "verbose",
+            _ => "info",
+        };
+        debug!(target: "bevy_cef::console", "{level} {source}:{line}: {message}");
         1
     }
 

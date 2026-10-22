@@ -8,8 +8,6 @@ mod keyboard;
 mod mute;
 mod navigation;
 mod profile;
-mod resize;
-mod system_param;
 mod title;
 mod webview;
 mod zoom;
@@ -25,14 +23,14 @@ use crate::keyboard::KeyboardPlugin;
 use crate::mute::AudioMutePlugin;
 use crate::prelude::{IpcPlugin, NavigationPlugin, WebviewPlugin};
 use crate::profile::ProfilePlugin;
-use crate::resize::plugin::ResizePlugin;
 use crate::title::TitlePlugin;
 use crate::zoom::ZoomPlugin;
 use bevy::prelude::*;
 use bevy_cef_core::prelude::{
     CefCustomScheme, CefExtensions, CommandLineConfig, effective_command_line_config, switches,
 };
-use bevy_remote::RemotePlugin;
+#[cfg(feature = "brp")]
+use bevy::remote::RemotePlugin;
 use std::time::Duration;
 
 pub mod prelude {
@@ -43,10 +41,10 @@ pub mod prelude {
         ProfileName, ProfileNameError, WebviewProfile, WebviewProfileError,
         WebviewProfileErrorReason,
     };
-    pub use crate::resize::components::{AspectLockMode, WebviewResizable};
     pub use crate::{CefPlugin, RunOnMainThread, navigation::*, title::*, webview::prelude::*};
     pub use bevy_cef_core::prelude::{
-        CefCustomScheme, CefExtensions, CefSchemeBody, CefSchemeHandler, CefSchemeOptions,
+        Browsers, RenderTextureMessage, CefCustomScheme, create_cef_key_events,
+        keyboard_modifiers, CefExtensions, CefSchemeBody, CefSchemeHandler, CefSchemeOptions,
         CefSchemeRequest, CefSchemeResponse, CommandLineConfig, switches,
     };
 }
@@ -155,7 +153,6 @@ impl Plugin for CefPlugin {
                 FocusPlugin,
                 SystemCursorIconPlugin,
                 DragPlugin,
-                ResizePlugin,
                 NavigationPlugin,
                 TitlePlugin,
                 ZoomPlugin,
@@ -164,6 +161,7 @@ impl Plugin for CefPlugin {
             .add_plugins(ProfilePlugin {
                 cookie_flush_interval: self.cookie_flush_interval,
             });
+        #[cfg(feature = "brp")]
         if !app.is_plugin_added::<RemotePlugin>() {
             app.add_plugins(RemotePlugin::default());
         }

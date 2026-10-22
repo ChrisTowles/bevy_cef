@@ -156,13 +156,6 @@ where
     }
 }
 
-/// Holds the webview surface texture handle for alpha hit-testing.
-///
-/// This component is automatically inserted and updated by the render systems.
-/// It provides material-type-agnostic access to the webview texture.
-#[derive(Component, Debug, Clone)]
-pub(crate) struct WebviewSurface(pub(crate) Handle<Image>);
-
 /// [macOS GPU OSR] Per-webview holder of the latest retained IOSurface, used for
 /// on-demand transparent-pixel hit-testing.
 ///

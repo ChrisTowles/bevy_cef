@@ -1,3 +1,4 @@
+#[cfg(feature = "brp")]
 use crate::browser_process::BrpHandler;
 use crate::browser_process::ClientHandlerBuilder;
 use crate::browser_process::client_handler::{IpcEventRaw, JsEmitEventHandler};
@@ -6,7 +7,6 @@ use crate::prelude::*;
 use async_channel::Sender;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy_remote::BrpMessage;
 use cef::{
     Browser, BrowserHost, BrowserSettings, CefString, Client, CompositionUnderline,
     DictionaryValue, ImplBrowser, ImplBrowserHost, ImplDictionaryValue, ImplFrame, ImplListValue,
@@ -18,6 +18,13 @@ use cef_dll_sys::{cef_event_flags_t, cef_mouse_button_type_t};
 #[allow(deprecated)]
 use raw_window_handle::RawWindowHandle;
 use std::cell::Cell;
+
+/// The page-JS -> Bevy Remote Protocol bridge's channel; `()` without the `brp` feature, which
+/// leaves pages no way to reach BRP.
+#[cfg(feature = "brp")]
+pub type BrpBridge = Sender<bevy::remote::BrpMessage>;
+#[cfg(not(feature = "brp"))]
+pub type BrpBridge = ();
 use std::rc::Rc;
 
 mod devtool_render_handler;
@@ -51,6 +58,7 @@ pub struct WebviewBrowser {
     pub host: BrowserHost,
     pub size: SharedViewSize,
     pub dpr: SharedDpr,
+    pub text_input: SharedTextInput,
     pub initial_zoom: SharedInitialZoom,
     #[cfg(not(target_os = "macos"))]
     pub view_slot: SharedTexture,
@@ -108,7 +116,7 @@ impl Browsers {
         initial_dpr: f32,
         requester: Requester,
         ipc_event_sender: Sender<IpcEventRaw>,
-        brp_sender: Sender<BrpMessage>,
+        brp_sender: BrpBridge,
         system_cursor_icon_sender: SystemCursorIconSenderInner,
         drag_regions_sender: DraggableRegionSenderInner,
         load_handler_sender: LoadHandlerSenderInner,
@@ -134,6 +142,7 @@ impl Browsers {
         };
         let size: SharedViewSize = Rc::new(Cell::new(webview_size));
         let dpr: SharedDpr = Rc::new(Cell::new(initial_dpr));
+        let text_input: SharedTextInput = Rc::new(Cell::new(false));
         let initial_zoom: SharedInitialZoom =
             Rc::new(Cell::new(InitialZoom::waiting(initial_zoom)));
         #[cfg(not(target_os = "macos"))]
@@ -172,6 +181,7 @@ impl Browsers {
                 #[cfg(not(target_os = "macos"))]
                 popup_slot.clone(),
                 dpr.clone(),
+                text_input.clone(),
                 ipc_event_sender,
                 brp_sender,
                 system_cursor_icon_sender,
@@ -199,6 +209,7 @@ impl Browsers {
             client: browser,
             size,
             dpr,
+            text_input,
             initial_zoom,
             #[cfg(not(target_os = "macos"))]
             view_slot,
@@ -337,7 +348,8 @@ impl Browsers {
         position: Vec2,
         mouse_leave: bool,
     ) {
-        if let Some(browser) = self.get_focused_browser(webview) {
+        // The pointer needs no keyboard focus: hover and wheel reach an unfocused page.
+        if let Some(browser) = self.browsers.get(webview) {
             let mouse_event = cef::MouseEvent {
                 x: position.x as i32,
                 y: position.y as i32,
@@ -363,7 +375,8 @@ impl Browsers {
         button: PointerButton,
         mouse_up: bool,
     ) {
-        if let Some(browser) = self.get_focused_browser(webview) {
+        // The pointer needs no keyboard focus: hover and wheel reach an unfocused page.
+        if let Some(browser) = self.browsers.get(webview) {
             let mouse_event = cef::MouseEvent {
                 x: position.x as i32,
                 y: position.y as i32,
@@ -390,7 +403,8 @@ impl Browsers {
 
     /// [`SendMouseWheelEvent`](https://cef-builds.spotifycdn.com/docs/106.1/classCefBrowserHost.html#acd5d057bd5230baa9a94b7853ba755f7)
     pub fn send_mouse_wheel(&self, webview: &Entity, position: Vec2, delta: Vec2) {
-        if let Some(browser) = self.get_focused_browser(webview) {
+        // The pointer needs no keyboard focus: hover and wheel reach an unfocused page.
+        if let Some(browser) = self.browsers.get(webview) {
             let mouse_event = cef::MouseEvent {
                 x: position.x as i32,
                 y: position.y as i32,
@@ -543,6 +557,33 @@ impl Browsers {
                 .into_iter()
                 .flatten()
         })
+    }
+
+    /// Runs `code` in the webview's main frame (results come back over `window.cef.emit`).
+    pub fn execute_js(&self, webview: &Entity, code: &str) {
+        if let Some(browser) = self.browsers.get(webview)
+            && let Some(frame) = browser.client.main_frame()
+        {
+            frame.execute_java_script(Some(&code.into()), Some(&"".into()), 0);
+        }
+    }
+
+    /// Types `text` into the webview's focused field, as an IME commit (any script, no key
+    /// mapping); only this webview receives it.
+    pub fn commit_text(&self, webview: &Entity, text: &str) {
+        if let Some(browser) = self.browsers.get(webview) {
+            let replacement_range = Self::ime_caret_range_for();
+            browser
+                .host
+                .ime_commit_text(Some(&text.into()), Some(&replacement_range), 0);
+        }
+    }
+
+    /// Whether an editable field has focus in the webview's page.
+    pub fn text_input(&self, webview: &Entity) -> bool {
+        self.browsers
+            .get(webview)
+            .is_some_and(|browser| browser.text_input.get())
     }
 
     /// Shows the DevTools for the specified webview.
@@ -796,8 +837,9 @@ impl Browsers {
         #[cfg(not(target_os = "macos"))] view_slot: SharedTexture,
         #[cfg(not(target_os = "macos"))] popup_slot: SharedTexture,
         dpr: SharedDpr,
+        text_input: SharedTextInput,
         ipc_event_sender: Sender<IpcEventRaw>,
-        brp_sender: Sender<BrpMessage>,
+        brp_sender: BrpBridge,
         system_cursor_icon_sender: SystemCursorIconSenderInner,
         drag_regions_sender: DraggableRegionSenderInner,
         load_handler_sender: LoadHandlerSenderInner,
@@ -810,11 +852,18 @@ impl Browsers {
     ) -> Client {
         #[cfg(target_os = "macos")]
         let render_handler =
-            RenderHandlerBuilder::build(webview, size.clone(), dpr, latest_iosurface);
+            RenderHandlerBuilder::build(webview, size.clone(), dpr, text_input, latest_iosurface);
         #[cfg(not(target_os = "macos"))]
         let render_handler =
-            RenderHandlerBuilder::build(webview, view_slot, popup_slot, size.clone(), dpr);
-        ClientHandlerBuilder::new(render_handler)
+            RenderHandlerBuilder::build(
+                webview,
+                view_slot,
+                popup_slot,
+                size.clone(),
+                dpr,
+                text_input,
+            );
+        let client = ClientHandlerBuilder::new(render_handler)
             .with_display_handler(DisplayHandlerBuilder::build(
                 webview,
                 system_cursor_icon_sender,
@@ -829,9 +878,12 @@ impl Browsers {
                 cookie_flusher,
             ))
             .with_life_span_handler(LifeSpanHandlerBuilder::build(self.live_browsers.clone()))
-            .with_message_handler(JsEmitEventHandler::new(webview, ipc_event_sender))
-            .with_message_handler(BrpHandler::new(brp_sender))
-            .build()
+            .with_message_handler(JsEmitEventHandler::new(webview, ipc_event_sender));
+        #[cfg(feature = "brp")]
+        let client = client.with_message_handler(BrpHandler::new(brp_sender));
+        #[cfg(not(feature = "brp"))]
+        let () = brp_sender;
+        client.build()
     }
 
     #[inline]

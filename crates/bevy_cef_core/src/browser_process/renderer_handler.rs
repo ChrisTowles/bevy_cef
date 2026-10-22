@@ -43,6 +43,10 @@ pub enum RenderPaintElementType {
 
 pub type SharedViewSize = std::rc::Rc<std::cell::Cell<Vec2>>;
 
+/// Whether an editable field in the page has focus (CEF's virtual-keyboard request): the host
+/// can hand the page the keyboard only while there is something to type into.
+pub type SharedTextInput = std::rc::Rc<std::cell::Cell<bool>>;
+
 /// Slot for a webview's current `device_scale_factor`.
 ///
 /// The CEF UI thread is the Bevy main thread on every platform
@@ -61,6 +65,7 @@ pub struct RenderHandlerBuilder {
     popup_slot: SharedTexture,
     size: SharedViewSize,
     dpr: SharedDpr,
+    text_input: SharedTextInput,
     /// Latest retained IOSurface for this webview's main view (Approach 2).
     ///
     /// `on_accelerated_paint` does no GPU work here — it only retains the latest
@@ -77,6 +82,7 @@ impl RenderHandlerBuilder {
         webview: Entity,
         size: SharedViewSize,
         dpr: SharedDpr,
+        text_input: SharedTextInput,
         latest_iosurface: crate::browser_process::accelerated_paint::SharedRetainedIoSurface,
     ) -> RenderHandler {
         RenderHandler::new(Self {
@@ -84,6 +90,7 @@ impl RenderHandlerBuilder {
             webview,
             size,
             dpr,
+            text_input,
             latest_iosurface,
         })
     }
@@ -95,6 +102,7 @@ impl RenderHandlerBuilder {
         popup_slot: SharedTexture,
         size: SharedViewSize,
         dpr: SharedDpr,
+        text_input: SharedTextInput,
     ) -> RenderHandler {
         RenderHandler::new(Self {
             object: std::ptr::null_mut(),
@@ -103,6 +111,7 @@ impl RenderHandlerBuilder {
             popup_slot,
             size,
             dpr,
+            text_input,
         })
     }
 }
@@ -138,6 +147,7 @@ impl Clone for RenderHandlerBuilder {
             popup_slot: self.popup_slot.clone(),
             size: self.size.clone(),
             dpr: self.dpr.clone(),
+            text_input: self.text_input.clone(),
             #[cfg(target_os = "macos")]
             latest_iosurface: self.latest_iosurface.clone(),
         }
@@ -179,6 +189,15 @@ impl ImplRenderHandler for RenderHandlerBuilder {
     // don't override it at all on macOS (the trait provides a default no-op).
     #[cfg(not(target_os = "macos"))]
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn on_virtual_keyboard_requested(
+        &self,
+        _browser: Option<&mut Browser>,
+        input_mode: TextInputMode,
+    ) {
+        let none = *input_mode.as_ref() == sys::cef_text_input_mode_t::CEF_TEXT_INPUT_MODE_NONE;
+        self.text_input.set(!none);
+    }
+
     fn on_paint(
         &self,
         _browser: Option<&mut Browser>,

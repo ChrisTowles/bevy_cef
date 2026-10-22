@@ -1,3 +1,4 @@
+#[cfg(feature = "brp")]
 mod brp_handler;
 mod js_emit_event_handler;
 
@@ -11,6 +12,7 @@ use cef::{
 };
 use std::os::raw::c_int;
 
+#[cfg(feature = "brp")]
 pub use brp_handler::BrpHandler;
 pub use js_emit_event_handler::{IpcEventRaw, JsEmitEventHandler};
 
