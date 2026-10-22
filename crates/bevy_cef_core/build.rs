@@ -149,7 +149,7 @@ mod linux {
     pub fn copy_cef_files() {
         println!("cargo:rerun-if-changed=build.rs");
         println!("cargo:rerun-if-env-changed=CEF_PATH");
-        println!("cargo:rerun-if-env-changed=DEP_CEF_PATH");
+        println!("cargo:rerun-if-env-changed=DEP_CEF_DLL_WRAPPER_CEF_DIR");
         println!("cargo:rerun-if-env-changed=HOME");
 
         let Some(cef_dir) = find_cef_dir() else {
@@ -167,21 +167,17 @@ mod linux {
         copy_render_process_binary(&target_dir, &examples_dir);
     }
 
+    /// The CEF cef-dll-sys built against (it downloads one, or takes `CEF_PATH`): its build script
+    /// publishes the directory to dependents (`links = "cef_dll_wrapper"`), so there is one CEF.
     fn find_cef_dir() -> Option<PathBuf> {
-        let cef_dir = env::var("DEP_CEF_PATH")
+        let cef_dir = env::var("DEP_CEF_DLL_WRAPPER_CEF_DIR")
             .ok()
-            .map(PathBuf::from)
-            .or_else(|| env::var("CEF_PATH").ok().map(PathBuf::from))
-            .or_else(|| {
-                env::var("HOME")
-                    .ok()
-                    .map(|home| PathBuf::from(home).join(".local/share/cef"))
-            })?;
-
+            .or_else(|| env::var("CEF_PATH").ok())
+            .map(PathBuf::from)?;
         println!("cargo:rerun-if-changed={}", cef_dir.display());
         if !cef_dir.exists() {
             println!(
-                "cargo:warning=CEF directory not found at {:?}. Run `make setup-linux` first. Skipping CEF file copy.",
+                "cargo:warning=CEF directory {:?} (from cef-dll-sys) not found. Skipping CEF file copy.",
                 cef_dir
             );
             return None;
@@ -211,21 +207,19 @@ mod linux {
         RUNTIME_EXTENSIONS.contains(&ext.as_str())
     }
 
+    /// The separate render process, if one was installed (`make setup-linux` puts it in
+    /// ~/.local/share/cef/bin). Optional: without it CEF runs the app itself as its helper
+    /// (`early_exit_if_subprocess`).
     fn copy_render_process_binary(src: &Path, dst: &Path) {
-        let binary = src.join(RENDER_PROCESS_BINARY);
-        let binary_in_bin = src.join("bin").join(RENDER_PROCESS_BINARY);
-        let binary = if binary.exists() {
-            binary
-        } else if binary_in_bin.exists() {
-            binary_in_bin
-        } else {
-            println!(
-                "cargo:warning=Render process binary not found at {:?}. \
-                 Run `cargo install bevy_cef_render_process` and copy to CEF directory, \
-                 or run `make setup-linux`. \
-                 Call `bevy_cef::prelude::early_exit_if_subprocess()` at top of `main()` as a fallback.",
-                binary
-            );
+        let home_bin = env::var("HOME")
+            .ok()
+            .map(|home| PathBuf::from(home).join(".local/share/cef/bin"));
+        let Some(binary) = [Some(src.to_path_buf()), Some(src.join("bin")), home_bin]
+            .into_iter()
+            .flatten()
+            .map(|dir| dir.join(RENDER_PROCESS_BINARY))
+            .find(|path| path.exists())
+        else {
             return;
         };
         let dest = dst.join(RENDER_PROCESS_BINARY);
@@ -236,8 +230,13 @@ mod linux {
                 return;
             }
         }
-        fs::copy(&binary, &dest).unwrap_or_else(|e| {
-            panic!("Failed to copy {:?} to {:?}: {}", binary, dest, e);
+        // Replaced by rename: the old one may be running (text file busy).
+        let staged = dst.join(format!(".{RENDER_PROCESS_BINARY}.new"));
+        fs::copy(&binary, &staged).unwrap_or_else(|e| {
+            panic!("Failed to copy {:?} to {:?}: {}", binary, staged, e);
+        });
+        fs::rename(&staged, &dest).unwrap_or_else(|e| {
+            panic!("Failed to move {:?} to {:?}: {}", staged, dest, e);
         });
     }
 
