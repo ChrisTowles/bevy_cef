@@ -27,14 +27,9 @@ mod windows {
         let target_dir = find_target_profile_dir();
         let examples_dir = target_dir.join("examples");
 
-        println!(
-            "cargo:warning=Copying CEF files from {:?} to {:?}",
-            cef_dir, target_dir
-        );
         copy_cef_runtime_files(&cef_dir, &target_dir);
         copy_render_process_binary(&cef_dir, &target_dir);
 
-        println!("cargo:warning=Copying CEF files into {:?}", examples_dir);
         fs::create_dir_all(&examples_dir).unwrap();
         copy_cef_runtime_files(&target_dir, &examples_dir);
         copy_render_process_binary(&target_dir, &examples_dir);
@@ -164,14 +159,9 @@ mod linux {
         let target_dir = find_target_profile_dir();
         let examples_dir = target_dir.join("examples");
 
-        println!(
-            "cargo:warning=Copying CEF files from {:?} to {:?}",
-            cef_dir, target_dir
-        );
         copy_cef_runtime_files(&cef_dir, &target_dir);
         copy_render_process_binary(&cef_dir, &target_dir);
 
-        println!("cargo:warning=Copying CEF files into {:?}", examples_dir);
         fs::create_dir_all(&examples_dir).unwrap();
         copy_cef_runtime_files(&target_dir, &examples_dir);
         copy_render_process_binary(&target_dir, &examples_dir);
