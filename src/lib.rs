@@ -47,6 +47,8 @@ pub mod prelude {
         keyboard_modifiers, CefExtensions, CefSchemeBody, CefSchemeHandler, CefSchemeOptions,
         CefSchemeRequest, CefSchemeResponse, CommandLineConfig, switches,
     };
+    #[cfg(target_os = "linux")]
+    pub use bevy_cef_core::prelude::DmabufPaint;
 }
 
 pub struct RunOnMainThread;
@@ -68,6 +70,11 @@ pub struct CefPlugin {
     /// wall-clock time. A flush also follows every main-frame load end in a profile webview.
     /// Defaults to 5 seconds.
     pub cookie_flush_interval: Duration,
+    /// Linux: CEF composites pages on the GPU and hands each frame over as a dmabuf
+    /// ([`WebviewGpuPainted`]) instead of copying its pixels to the CPU, for an app that shows
+    /// it straight from GPU memory. Adds the switches CEF's GPU path needs (X11 ozone, ANGLE
+    /// on Vulkan), so not with `ozone-platform=headless`. Off by default.
+    pub gpu_paint: bool,
 }
 
 impl Default for CefPlugin {
@@ -79,6 +86,7 @@ impl Default for CefPlugin {
             custom_schemes: Default::default(),
             sandbox: Default::default(),
             cookie_flush_interval: Duration::from_secs(5),
+            gpu_paint: false,
         }
     }
 }
@@ -93,8 +101,18 @@ impl Plugin for CefPlugin {
         // Resolve the sandbox decision and compute the effective command line once.
         let no_sandbox = resolve_no_sandbox(self.sandbox);
         let strip_no_zygote = cfg!(target_os = "linux") && !no_sandbox;
+        let mut command_line_config = self.command_line_config.clone();
+        if cfg!(target_os = "linux") && self.gpu_paint {
+            // Chromium's GPU process on Wayland (or GL) cannot hand a native pixmap to its
+            // compositor on NVIDIA; X11 with ANGLE on Vulkan can.
+            command_line_config.switch_values.extend([
+                ("ozone-platform", "x11"),
+                ("use-angle", "vulkan"),
+                ("enable-features", "Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"),
+            ]);
+        }
         let effective_config =
-            effective_command_line_config(&self.command_line_config, strip_no_zygote);
+            effective_command_line_config(&command_line_config, strip_no_zygote);
 
         // Warn when any security-relaxing switch is active (based on the EFFECTIVE set).
         let risky = switches::risky_present(&effective_config.switches);
@@ -164,6 +182,15 @@ impl Plugin for CefPlugin {
         #[cfg(feature = "brp")]
         if !app.is_plugin_added::<RemotePlugin>() {
             app.add_plugins(RemotePlugin::default());
+        }
+    }
+
+    fn finish(&self, app: &mut App) {
+        #[cfg(target_os = "linux")]
+        if let Some(mut browsers) = app
+            .world_mut()
+            .get_non_send_mut::<bevy_cef_core::prelude::Browsers>() {
+            browsers.gpu_paint = self.gpu_paint;
         }
     }
 }

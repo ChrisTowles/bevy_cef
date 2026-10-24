@@ -31,6 +31,8 @@ pub mod prelude {
         BeginFrameInterval, RequestCloseDevtool, RequestShowDevTool, WebviewPlugin,
         image::ImageWebviewPlugin,
     };
+    #[cfg(target_os = "linux")]
+    pub use crate::webview::image::WebviewGpuPainted;
 }
 
 /// A Trigger event to request showing the developer tools in a webview.

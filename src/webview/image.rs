@@ -23,6 +23,60 @@ impl Plugin for ImageWebviewPlugin {
                     size_image_webviews.after(UiSystems::Layout),
                 ),
             );
+        #[cfg(target_os = "linux")]
+        app.add_message::<WebviewGpuPainted>().add_systems(
+            PostUpdate,
+            paint_gpu_targets.before(AssetEventSystems),
+        );
+    }
+}
+
+/// A page painted on the GPU (`CefPlugin::gpu_paint`): `frame` is what `image` should show.
+/// The image is a size-carrying placeholder without pixels (the renderer must take the frame
+/// from GPU memory); it is marked modified each paint.
+#[cfg(target_os = "linux")]
+#[derive(Message, Debug)]
+pub struct WebviewGpuPainted {
+    pub webview: Entity,
+    pub image: AssetId<Image>,
+    pub frame: DmabufPaint,
+}
+
+/// Each page's GPU frame to its webview's target image, which follows the frame's size.
+#[cfg(target_os = "linux")]
+fn paint_gpu_targets(
+    browsers: NonSend<Browsers>,
+    mut images: ResMut<Assets<Image>>,
+    targets: Query<&WebviewTextureTarget>,
+    mut painted: MessageWriter<WebviewPainted>,
+    mut gpu: MessageWriter<WebviewGpuPainted>,
+) {
+    for (webview, frame) in browsers.drain_gpu_paints() {
+        let Ok(target) = targets.get(webview) else {
+            continue;
+        };
+        let Some(mut image) = images.get_mut(target.0.id()) else {
+            continue;
+        };
+        if image.data.is_some()
+            || image.texture_descriptor.size.width != frame.width
+            || image.texture_descriptor.size.height != frame.height
+        {
+            let mut placeholder = Image::new_target_texture(
+                frame.width,
+                frame.height,
+                TextureFormat::Bgra8UnormSrgb,
+                None,
+            );
+            placeholder.data = None;
+            *image = placeholder;
+        }
+        painted.write(WebviewPainted { webview });
+        gpu.write(WebviewGpuPainted {
+            webview,
+            image: target.0.id(),
+            frame,
+        });
     }
 }
 

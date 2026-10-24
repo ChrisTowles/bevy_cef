@@ -90,6 +90,10 @@ pub enum EditCommand {
 
 #[derive(Default)]
 pub struct Browsers {
+    /// Linux: new browsers paint through CEF's shared textures (dmabufs) rather than `OnPaint`
+    /// (`CefPlugin::gpu_paint`).
+    #[cfg(target_os = "linux")]
+    pub gpu_paint: bool,
     browsers: HashMap<Entity, WebviewBrowser>,
     live_browsers: SharedLiveBrowsers,
     /// One shared request context per profile, keyed by the profile's cache path.
@@ -160,6 +164,9 @@ impl Browsers {
                 // via on_accelerated_paint instead of CPU buffers via on_paint.
                 #[cfg(target_os = "macos")]
                 shared_texture_enabled: true as _,
+                // Linux GPU OSR: dmabufs via on_accelerated_paint, when asked for.
+                #[cfg(target_os = "linux")]
+                shared_texture_enabled: self.gpu_paint as _,
                 #[cfg(target_os = "macos")]
                 parent_view: match _window_handle {
                     Some(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
@@ -557,6 +564,14 @@ impl Browsers {
                 .into_iter()
                 .flatten()
         })
+    }
+
+    /// Each webview's latest GPU frame (`gpu_paint`), if it painted since the last drain.
+    #[cfg(target_os = "linux")]
+    pub fn drain_gpu_paints(&self) -> impl Iterator<Item = (Entity, DmabufPaint)> + '_ {
+        self.browsers
+            .iter()
+            .filter_map(|(webview, b)| Some((*webview, b.view_slot.gpu.take()?)))
     }
 
     /// Gives a drained frame's buffer (or the one it replaced) back to the webview's next paint.

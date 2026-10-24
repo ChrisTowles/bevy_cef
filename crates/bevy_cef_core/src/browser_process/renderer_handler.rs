@@ -27,6 +27,21 @@ pub type SharedTexture = std::rc::Rc<TextureSlot>;
 pub struct TextureSlot {
     frame: Cell<Option<RenderTextureMessage>>,
     spare: Cell<Option<Vec<u8>>>,
+    /// The latest GPU frame (`gpu_paint`); a newer one closes the older's fd.
+    #[cfg(target_os = "linux")]
+    pub(crate) gpu: Cell<Option<DmabufPaint>>,
+}
+
+/// A page frame in GPU memory (Linux `gpu_paint`): a linear BGRA dmabuf, `width` x `height`,
+/// rows `stride` bytes apart from `offset`. The fd is ours (duplicated out of CEF's paint).
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+pub struct DmabufPaint {
+    pub fd: std::os::fd::OwnedFd,
+    pub offset: u64,
+    pub stride: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -263,6 +278,52 @@ impl ImplRenderHandler for RenderHandlerBuilder {
             width: width as u32,
             height: height as u32,
             buffer: pixel_buffer,
+        }));
+    }
+
+    #[cfg(target_os = "linux")]
+    fn on_accelerated_paint(
+        &self,
+        _browser: Option<&mut Browser>,
+        type_: PaintElementType,
+        _dirty_rects: Option<&[cef::Rect]>,
+        info: Option<&AcceleratedPaintInfo>,
+    ) {
+        use std::os::fd::BorrowedFd;
+        // The view only, as with `on_paint`'s consumer: popups are not composited yet.
+        if !matches!(type_.as_ref(), cef_paint_element_type_t::PET_VIEW) {
+            return;
+        }
+        let Some(info) = info else { return };
+        // DRM_FORMAT_MOD_LINEAR: the consumer reads it as a plain pitched buffer.
+        if !matches!(
+            info.format.as_ref(),
+            cef_dll_sys::cef_color_type_t::CEF_COLOR_TYPE_BGRA_8888
+        ) || info.plane_count != 1
+            || info.modifier != 0
+        {
+            bevy::log::error_once!(
+                "gpu paint: unsupported shared texture ({:?}, {} planes, modifier {:#x}); dropping frames",
+                info.format.as_ref(),
+                info.plane_count,
+                info.modifier
+            );
+            return;
+        }
+        let plane = &info.planes[0];
+        if plane.fd < 0 {
+            return;
+        }
+        // CEF closes its fd when this returns; the frame keeps a duplicate.
+        let Ok(fd) = unsafe { BorrowedFd::borrow_raw(plane.fd) }.try_clone_to_owned() else {
+            return;
+        };
+        self.view_slot.gpu.set(Some(DmabufPaint {
+            fd,
+            offset: plane.offset,
+            stride: plane.stride,
+            width: info.extra.coded_size.width as u32,
+            height: info.extra.coded_size.height as u32,
         }));
     }
 
