@@ -146,9 +146,9 @@ impl Browsers {
         let initial_zoom: SharedInitialZoom =
             Rc::new(Cell::new(InitialZoom::waiting(initial_zoom)));
         #[cfg(not(target_os = "macos"))]
-        let view_slot: SharedTexture = Rc::new(Cell::new(None));
+        let view_slot: SharedTexture = Rc::new(TextureSlot::default());
         #[cfg(not(target_os = "macos"))]
-        let popup_slot: SharedTexture = Rc::new(Cell::new(None));
+        let popup_slot: SharedTexture = Rc::new(TextureSlot::default());
         #[cfg(target_os = "macos")]
         let latest_iosurface: crate::browser_process::accelerated_paint::SharedRetainedIoSurface =
             Rc::new(std::cell::RefCell::new(None));
@@ -559,6 +559,14 @@ impl Browsers {
         })
     }
 
+    /// Gives a drained frame's buffer (or the one it replaced) back to the webview's next paint.
+    #[cfg(not(target_os = "macos"))]
+    pub fn recycle_texture(&self, webview: &Entity, buffer: Vec<u8>) {
+        if let Some(browser) = self.browsers.get(webview) {
+            browser.view_slot.recycle(buffer);
+        }
+    }
+
     /// Runs `code` in the webview's main frame (results come back over `window.cef.emit`).
     pub fn execute_js(&self, webview: &Entity, code: &str) {
         if let Some(browser) = self.browsers.get(webview)
@@ -854,15 +862,14 @@ impl Browsers {
         let render_handler =
             RenderHandlerBuilder::build(webview, size.clone(), dpr, text_input, latest_iosurface);
         #[cfg(not(target_os = "macos"))]
-        let render_handler =
-            RenderHandlerBuilder::build(
-                webview,
-                view_slot,
-                popup_slot,
-                size.clone(),
-                dpr,
-                text_input,
-            );
+        let render_handler = RenderHandlerBuilder::build(
+            webview,
+            view_slot,
+            popup_slot,
+            size.clone(),
+            dpr,
+            text_input,
+        );
         let client = ClientHandlerBuilder::new(render_handler)
             .with_display_handler(DisplayHandlerBuilder::build(
                 webview,

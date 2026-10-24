@@ -14,41 +14,35 @@ pub struct ImageWebviewPlugin;
 
 impl Plugin for ImageWebviewPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<RenderTextureMessage>()
-            .add_systems(Update, (send_render_textures, setup_image_webviews))
+        app.add_message::<WebviewPainted>()
+            .add_systems(Update, setup_image_webviews)
             .add_systems(
                 PostUpdate,
                 (
-                    paint_texture_targets
-                        .run_if(on_message::<RenderTextureMessage>)
-                        .before(AssetEventSystems),
+                    paint_texture_targets.before(AssetEventSystems),
                     size_image_webviews.after(UiSystems::Layout),
                 ),
             );
     }
 }
 
-fn send_render_textures(mut ew: MessageWriter<RenderTextureMessage>, browsers: NonSend<Browsers>) {
-    for texture in browsers.try_receive_textures() {
-        ew.write(texture);
-    }
-}
-
-/// Copies a CPU `OnPaint` frame into an `Image`, reallocating it when the frame size differs.
-/// Returns `true` when the image was reallocated.
+/// Moves a CPU `OnPaint` frame into an `Image` (no copy: the image's old pixels go back to the
+/// page's next paint), reallocating it when the frame size differs.
 pub(crate) fn update_webview_image(
-    texture: &RenderTextureMessage,
+    browsers: &Browsers,
+    texture: RenderTextureMessage,
     mut image: AssetMut<'_, Image>,
-) -> bool {
+) {
     let expected_len = (texture.width * texture.height * 4) as usize;
     let dimensions_match = image.texture_descriptor.size.width == texture.width
         && image.texture_descriptor.size.height == texture.height;
     if let Some(data) = image.data.as_mut()
         && dimensions_match
+        && texture.buffer.len() == expected_len
         && data.len() == expected_len
     {
-        data.copy_from_slice(&texture.buffer);
-        false
+        let old = std::mem::replace(data, texture.buffer);
+        browsers.recycle_texture(&texture.webview, old);
     } else {
         *image = Image::new(
             Extent3d {
@@ -57,30 +51,35 @@ pub(crate) fn update_webview_image(
                 depth_or_array_layers: 1,
             },
             TextureDimension::D2,
-            texture.buffer.clone(),
+            texture.buffer,
             TextureFormat::Bgra8UnormSrgb,
             RenderAssetUsages::all(),
         );
-        true
     }
 }
 
 /// Each page frame into its webview's target image. Popups (a `<select>` list) are not
 /// composited yet: only the view is shown.
 fn paint_texture_targets(
-    mut er: MessageReader<RenderTextureMessage>,
+    browsers: NonSend<Browsers>,
     mut images: ResMut<Assets<Image>>,
     targets: Query<&WebviewTextureTarget>,
+    mut painted: MessageWriter<WebviewPainted>,
 ) {
-    for texture in er.read() {
+    let textures: Vec<RenderTextureMessage> = browsers.try_receive_textures().collect();
+    for texture in textures {
         if texture.ty != RenderPaintElementType::View {
             continue;
         }
         let Ok(target) = targets.get(texture.webview) else {
+            browsers.recycle_texture(&texture.webview, texture.buffer);
             continue;
         };
         if let Some(image) = images.get_mut(target.0.id()) {
-            update_webview_image(texture, image);
+            painted.write(WebviewPainted {
+                webview: texture.webview,
+            });
+            update_webview_image(&browsers, texture, image);
         }
     }
 }

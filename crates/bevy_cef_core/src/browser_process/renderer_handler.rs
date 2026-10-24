@@ -9,17 +9,47 @@ use std::os::raw::c_int;
 /// A shared slot holding the latest texture for a single paint element type.
 ///
 /// Uses `Rc<Cell<Option<T>>>` instead of a channel because both producer (`on_paint`)
-/// and consumer (`send_render_textures`) run on the same thread (CEF UI thread =
+/// and consumer (`paint_texture_targets`) run on the same thread (CEF UI thread =
 /// Bevy main thread under `external_message_pump` mode). This eliminates all
 /// synchronization overhead and naturally provides "latest frame wins" semantics.
+///
+/// The consumer hands back the buffer it replaced ([`TextureSlot::recycle`]), so a page
+/// painting every frame copies into memory already mapped instead of a fresh full-frame
+/// allocation (its page faults cost more than the copy).
 ///
 /// Non-macOS only: the CPU `OnPaint` path (Linux and Windows). macOS uses the GPU
 /// IOSurface accelerated-paint path (no slots).
 #[cfg(not(target_os = "macos"))]
-pub type SharedTexture = std::rc::Rc<Cell<Option<RenderTextureMessage>>>;
+pub type SharedTexture = std::rc::Rc<TextureSlot>;
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Default)]
+pub struct TextureSlot {
+    frame: Cell<Option<RenderTextureMessage>>,
+    spare: Cell<Option<Vec<u8>>>,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl TextureSlot {
+    /// The latest frame, if one was painted since the last take.
+    pub fn take(&self) -> Option<RenderTextureMessage> {
+        self.frame.take()
+    }
+
+    /// A buffer the next paint may reuse.
+    pub fn recycle(&self, buffer: Vec<u8>) {
+        self.spare.set(Some(buffer));
+    }
+}
+
+/// A webview painted a new frame into its target image this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Message)]
+pub struct WebviewPainted {
+    pub webview: Entity,
+}
 
 /// The texture structure passed from [`CefRenderHandler::OnPaint`](https://cef-builds.spotifycdn.com/docs/106.1/classCefRenderHandler.html#a6547d5c9dd472e6b84706dc81d3f1741).
-#[derive(Debug, Clone, PartialEq, Message)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RenderTextureMessage {
     /// The entity of target rendering webview.
     pub webview: Entity,
@@ -220,10 +250,14 @@ impl ImplRenderHandler for RenderHandlerBuilder {
         // paint several times between two drains (on Windows it composites at its own rate);
         // without this each of those paints allocates and frees a full-frame `Vec`. When the
         // slot was already drained this is the same single allocation as before.
-        let mut pixel_buffer = slot.take().map(|stale| stale.buffer).unwrap_or_default();
+        let mut pixel_buffer = slot
+            .take()
+            .map(|stale| stale.buffer)
+            .or_else(|| slot.spare.take())
+            .unwrap_or_default();
         pixel_buffer.clear();
         pixel_buffer.extend_from_slice(pixels);
-        slot.set(Some(RenderTextureMessage {
+        slot.frame.set(Some(RenderTextureMessage {
             webview: self.webview,
             ty,
             width: width as u32,

@@ -210,7 +210,7 @@ pub(crate) fn add_failed_startup(app: &mut App, error: CefStartupError, root: Op
     app.insert_resource(CefStatus::Failed(error))
         .insert_resource(CefRootCachePath(root))
         .add_plugins((WebviewCoreComponentsPlugin, IpcRawEventPlugin))
-        .add_message::<RenderTextureMessage>()
+        .add_message::<WebviewPainted>()
         .init_resource::<FocusedWebview>()
         .init_resource::<CefKeyboardFilter>()
         .init_resource::<BeginFrameInterval>()

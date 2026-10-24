@@ -43,7 +43,7 @@ pub mod prelude {
     };
     pub use crate::{CefPlugin, RunOnMainThread, navigation::*, title::*, webview::prelude::*};
     pub use bevy_cef_core::prelude::{
-        Browsers, RenderTextureMessage, CefCustomScheme, create_cef_key_events,
+        Browsers, RenderTextureMessage, WebviewPainted, CefCustomScheme, create_cef_key_events,
         keyboard_modifiers, CefExtensions, CefSchemeBody, CefSchemeHandler, CefSchemeOptions,
         CefSchemeRequest, CefSchemeResponse, CommandLineConfig, switches,
     };
