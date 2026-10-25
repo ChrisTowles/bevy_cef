@@ -71,7 +71,7 @@ pub struct CefPlugin {
     /// Defaults to 5 seconds.
     pub cookie_flush_interval: Duration,
     /// Linux: CEF composites pages on the GPU and hands each frame over as a dmabuf
-    /// ([`WebviewGpuPainted`]) instead of copying its pixels to the CPU, for an app that shows
+    /// (`WebviewGpuPainted`) instead of copying its pixels to the CPU, for an app that shows
     /// it straight from GPU memory. Adds the switches CEF's GPU path needs (X11 ozone, ANGLE
     /// on Vulkan), so not with `ozone-platform=headless`. Off by default.
     pub gpu_paint: bool,
@@ -105,11 +105,25 @@ impl Plugin for CefPlugin {
         if cfg!(target_os = "linux") && self.gpu_paint {
             // Chromium's GPU process on Wayland (or GL) cannot hand a native pixmap to its
             // compositor on NVIDIA; X11 with ANGLE on Vulkan can.
-            command_line_config.switch_values.extend([
-                ("ozone-platform", "x11"),
-                ("use-angle", "vulkan"),
-                ("enable-features", "Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"),
-            ]);
+            // Chromium keeps only the last value of a repeated switch, so these replace the
+            // app's own `ozone-platform` / `use-angle` and join its `enable-features`.
+            let values = &mut command_line_config.switch_values;
+            for (name, value) in [("ozone-platform", "x11"), ("use-angle", "vulkan")] {
+                if let Some(old) = values.iter().find(|(n, v)| *n == name && *v != value) {
+                    warn!("gpu_paint: {name}={} replaced by {name}={value}", old.1);
+                }
+                values.retain(|(n, _)| *n != name);
+                values.push((name, value));
+            }
+            let mut features = vec!["Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"];
+            features.extend(
+                values
+                    .iter()
+                    .filter(|(n, _)| *n == "enable-features")
+                    .map(|(_, v)| *v),
+            );
+            values.retain(|(n, _)| *n != "enable-features");
+            values.push(("enable-features", features.join(",").leak()));
         }
         let effective_config =
             effective_command_line_config(&command_line_config, strip_no_zygote);

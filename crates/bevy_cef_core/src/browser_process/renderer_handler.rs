@@ -311,7 +311,10 @@ impl ImplRenderHandler for RenderHandlerBuilder {
             return;
         }
         let plane = &info.planes[0];
-        if plane.fd < 0 {
+        // The page is the visible area of the (possibly padded) coded buffer.
+        let visible = &info.extra.visible_rect;
+        if plane.fd < 0 || visible.width <= 0 || visible.height <= 0 || visible.x < 0 || visible.y < 0
+        {
             return;
         }
         // CEF closes its fd when this returns; the frame keeps a duplicate.
@@ -320,10 +323,10 @@ impl ImplRenderHandler for RenderHandlerBuilder {
         };
         self.view_slot.gpu.set(Some(DmabufPaint {
             fd,
-            offset: plane.offset,
+            offset: plane.offset + visible.y as u64 * plane.stride as u64 + visible.x as u64 * 4,
             stride: plane.stride,
-            width: info.extra.coded_size.width as u32,
-            height: info.extra.coded_size.height as u32,
+            width: visible.width as u32,
+            height: visible.height as u32,
         }));
     }
 
