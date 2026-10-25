@@ -90,8 +90,8 @@ pub enum EditCommand {
 
 #[derive(Default)]
 pub struct Browsers {
-    /// Linux: new browsers paint through CEF's shared textures (dmabufs) rather than `OnPaint`
-    /// (`CefPlugin::gpu_paint`).
+    /// Linux: new browsers paint through CEF's shared textures (dmabufs) rather than `OnPaint`:
+    /// `CefPlugin::gpu_paint` when its preflight passed (the effective value, for apps to read).
     #[cfg(target_os = "linux")]
     pub gpu_paint: bool,
     /// Where their frames go ([`Self::set_gpu_paint_sink`]).

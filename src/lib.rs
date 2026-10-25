@@ -4,6 +4,8 @@ mod common;
 mod cursor_icon;
 mod drag;
 mod focus;
+#[cfg(target_os = "linux")]
+mod gpu_paint;
 mod keyboard;
 mod mute;
 mod navigation;
@@ -75,6 +77,11 @@ pub struct CefPlugin {
     /// CEF takes it back (`WebviewGpuPainted` follows), instead of copying its pixels to the
     /// CPU. Adds the switches CEF's GPU path needs (X11 ozone, ANGLE
     /// on Vulkan), so not with `ozone-platform=headless`. Off by default.
+    ///
+    /// Checked before CEF starts: without the X display, `libvulkan.so.1` beside libcef.so
+    /// (ANGLE loads Vulkan from there only) or a Vulkan device that exports dmabufs, it warns
+    /// and pages paint on the CPU (no switches added), since Chromium would exit the app after
+    /// failing to start its GPU process. `Browsers::gpu_paint` holds the effective value.
     pub gpu_paint: bool,
 }
 
@@ -103,7 +110,14 @@ impl Plugin for CefPlugin {
         let no_sandbox = resolve_no_sandbox(self.sandbox);
         let strip_no_zygote = cfg!(target_os = "linux") && !no_sandbox;
         let mut command_line_config = self.command_line_config.clone();
-        if cfg!(target_os = "linux") && self.gpu_paint {
+        #[cfg(target_os = "linux")]
+        let gpu_paint = self.gpu_paint
+            && gpu_paint::preflight()
+                .inspect_err(|e| warn!("bevy_cef: gpu_paint off, pages paint on the CPU: {e}"))
+                .is_ok();
+        #[cfg(not(target_os = "linux"))]
+        let gpu_paint = false;
+        if gpu_paint {
             // Chromium's GPU process on Wayland (or GL) cannot hand a native pixmap to its
             // compositor on NVIDIA; X11 with ANGLE on Vulkan can.
             // Chromium keeps only the last value of a repeated switch, so these replace the
@@ -194,18 +208,16 @@ impl Plugin for CefPlugin {
             .add_plugins(ProfilePlugin {
                 cookie_flush_interval: self.cookie_flush_interval,
             });
-        #[cfg(feature = "brp")]
-        if !app.is_plugin_added::<RemotePlugin>() {
-            app.add_plugins(RemotePlugin::default());
-        }
-    }
-
-    fn finish(&self, app: &mut App) {
         #[cfg(target_os = "linux")]
         if let Some(mut browsers) = app
             .world_mut()
-            .get_non_send_mut::<bevy_cef_core::prelude::Browsers>() {
-            browsers.gpu_paint = self.gpu_paint;
+            .get_non_send_mut::<bevy_cef_core::prelude::Browsers>()
+        {
+            browsers.gpu_paint = gpu_paint;
+        }
+        #[cfg(feature = "brp")]
+        if !app.is_plugin_added::<RemotePlugin>() {
+            app.add_plugins(RemotePlugin::default());
         }
     }
 }

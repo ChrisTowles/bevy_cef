@@ -87,6 +87,9 @@ objc = { version = "0.2" }
 # Bevy's default features (which would pull in `x11`) are disabled workspace-wide.
 [target.'cfg(target_os = "linux")'.dependencies]
 bevy = { workspace = true, features = ["x11", "wayland"] }
+# `gpu_paint`'s preflight (src/gpu_paint.rs): CEF's own Vulkan loader, and libX11.
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+libloading = "0.8"
 
 [lints]
 workspace = true

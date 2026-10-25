@@ -198,13 +198,17 @@ mod linux {
         }
     }
 
+    /// Versioned shared objects too: CEF's ANGLE loads `libvulkan.so.1` only from libcef.so's
+    /// own directory, so without it beside the binary (launched directly, with no CEF directory
+    /// on `LD_LIBRARY_PATH`) the GPU process cannot start Vulkan.
     fn is_runtime_file(path: &Path) -> bool {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        RUNTIME_EXTENSIONS.contains(&ext.as_str())
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        RUNTIME_EXTENSIONS.contains(&ext.as_str()) || name.contains(".so.")
     }
 
     /// The separate render process, if one was installed (`make setup-linux` puts it in
