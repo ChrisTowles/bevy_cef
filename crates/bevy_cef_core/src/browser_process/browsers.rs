@@ -94,6 +94,9 @@ pub struct Browsers {
     /// (`CefPlugin::gpu_paint`).
     #[cfg(target_os = "linux")]
     pub gpu_paint: bool,
+    /// Where their frames go ([`Self::set_gpu_paint_sink`]).
+    #[cfg(target_os = "linux")]
+    gpu_sink: SharedGpuPaintSink,
     browsers: HashMap<Entity, WebviewBrowser>,
     live_browsers: SharedLiveBrowsers,
     /// One shared request context per profile, keyed by the profile's cache path.
@@ -149,8 +152,10 @@ impl Browsers {
         let text_input: SharedTextInput = Rc::new(Cell::new(false));
         let initial_zoom: SharedInitialZoom =
             Rc::new(Cell::new(InitialZoom::waiting(initial_zoom)));
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let view_slot: SharedTexture = Rc::new(TextureSlot::default());
+        #[cfg(target_os = "linux")]
+        let view_slot: SharedTexture = Rc::new(TextureSlot::with_gpu_sink(self.gpu_sink.clone()));
         #[cfg(not(target_os = "macos"))]
         let popup_slot: SharedTexture = Rc::new(TextureSlot::default());
         #[cfg(target_os = "macos")]
@@ -516,7 +521,29 @@ impl Browsers {
     pub fn close(&mut self, webview: &Entity) {
         if let Some(browser) = self.browsers.remove(webview) {
             browser.host.close_browser(true as _);
+            self.close_gpu_paints(*webview);
             debug!("Closed browser with webview: {:?}", webview);
+        }
+    }
+
+    /// Where GPU frames go (`gpu_paint`); replaces the previous sink.
+    #[cfg(target_os = "linux")]
+    pub fn set_gpu_paint_sink(&self, sink: impl GpuPaintSink + 'static) {
+        *self.gpu_sink.borrow_mut() = Some(Box::new(sink));
+    }
+
+    /// Forgets every webview's browser (and its GPU frames).
+    fn forget_browsers(&mut self) {
+        let webviews: Vec<Entity> = self.browsers.drain().map(|(webview, _)| webview).collect();
+        for webview in webviews {
+            self.close_gpu_paints(webview);
+        }
+    }
+
+    fn close_gpu_paints(&self, _webview: Entity) {
+        #[cfg(target_os = "linux")]
+        if let Some(sink) = self.gpu_sink.borrow_mut().as_mut() {
+            sink.close(_webview);
         }
     }
 
@@ -541,7 +568,7 @@ impl Browsers {
                 host.close_browser(1);
             }
         }
-        self.browsers.clear();
+        self.forget_browsers();
     }
 
     /// Drops every CEF reference `Browsers` holds: the webview browsers, the live-browser list
@@ -549,7 +576,7 @@ impl Browsers {
     ///
     /// Must run before `cef::shutdown()`, so no reference outlives CEF.
     pub fn release_all(&mut self) {
-        self.browsers.clear();
+        self.forget_browsers();
         self.live_browsers.borrow_mut().clear();
         self.profiles.clear();
     }
@@ -566,9 +593,10 @@ impl Browsers {
         })
     }
 
-    /// Each webview's latest GPU frame (`gpu_paint`), if it painted since the last drain.
+    /// The size of each webview's latest GPU frame the sink took (`gpu_paint`), if one landed
+    /// since the last drain.
     #[cfg(target_os = "linux")]
-    pub fn drain_gpu_paints(&self) -> impl Iterator<Item = (Entity, DmabufPaint)> + '_ {
+    pub fn drain_gpu_paints(&self) -> impl Iterator<Item = (Entity, UVec2)> + '_ {
         self.browsers
             .iter()
             .filter_map(|(webview, b)| Some((*webview, b.view_slot.gpu.take()?)))

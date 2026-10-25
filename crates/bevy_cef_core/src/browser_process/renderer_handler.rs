@@ -27,25 +27,54 @@ pub type SharedTexture = std::rc::Rc<TextureSlot>;
 pub struct TextureSlot {
     frame: Cell<Option<RenderTextureMessage>>,
     spare: Cell<Option<Vec<u8>>>,
-    /// The latest GPU frame (`gpu_paint`); a newer one closes the older's fd.
+    /// The size of the latest GPU frame the sink took (`gpu_paint`), if one landed since the
+    /// last drain.
     #[cfg(target_os = "linux")]
-    pub(crate) gpu: Cell<Option<DmabufPaint>>,
+    pub(crate) gpu: Cell<Option<UVec2>>,
+    /// Where GPU frames go (`gpu_paint`): the browsers' one sink.
+    #[cfg(target_os = "linux")]
+    pub(crate) gpu_sink: SharedGpuPaintSink,
 }
 
 /// A page frame in GPU memory (Linux `gpu_paint`): a linear BGRA dmabuf, `width` x `height`,
-/// rows `stride` bytes apart from `offset`. The fd is ours (duplicated out of CEF's paint).
+/// rows `stride` bytes apart from `offset`. CEF lends it for the length of
+/// `on_accelerated_paint` only: it draws a later frame into the same buffer once that returns.
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
-pub struct DmabufPaint {
-    pub fd: std::os::fd::OwnedFd,
+pub struct DmabufPaint<'a> {
+    pub fd: std::os::fd::BorrowedFd<'a>,
     pub offset: u64,
     pub stride: u32,
     pub width: u32,
     pub height: u32,
 }
 
+/// Takes GPU frames out of CEF (`gpu_paint`), from inside `on_accelerated_paint` on the main
+/// thread (CEF's UI thread under `external_message_pump`), between Bevy's systems.
+#[cfg(target_os = "linux")]
+pub trait GpuPaintSink {
+    /// Copies `paint` out before returning (the dmabuf is CEF's again after: a copy finished
+    /// later may read the next frame half drawn); whether the frame landed.
+    fn paint(&mut self, webview: Entity, paint: &DmabufPaint) -> bool;
+    /// The webview's browser closed: whatever was kept for its frames can go.
+    fn close(&mut self, webview: Entity);
+}
+
+/// The browsers' GPU frame sink, set by the app ([`crate::prelude::Browsers::set_gpu_paint_sink`]).
+#[cfg(target_os = "linux")]
+pub type SharedGpuPaintSink = std::rc::Rc<std::cell::RefCell<Option<Box<dyn GpuPaintSink>>>>;
+
 #[cfg(not(target_os = "macos"))]
 impl TextureSlot {
+    /// A view's slot, whose GPU frames go to `gpu_sink`.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn with_gpu_sink(gpu_sink: SharedGpuPaintSink) -> Self {
+        Self {
+            gpu_sink,
+            ..Default::default()
+        }
+    }
+
     /// The latest frame, if one was painted since the last take.
     pub fn take(&self) -> Option<RenderTextureMessage> {
         self.frame.take()
@@ -313,21 +342,34 @@ impl ImplRenderHandler for RenderHandlerBuilder {
         let plane = &info.planes[0];
         // The page is the visible area of the (possibly padded) coded buffer.
         let visible = &info.extra.visible_rect;
-        if plane.fd < 0 || visible.width <= 0 || visible.height <= 0 || visible.x < 0 || visible.y < 0
+        if plane.fd < 0
+            || visible.width <= 0
+            || visible.height <= 0
+            || visible.x < 0
+            || visible.y < 0
         {
             return;
         }
-        // CEF closes its fd when this returns; the frame keeps a duplicate.
-        let Ok(fd) = unsafe { BorrowedFd::borrow_raw(plane.fd) }.try_clone_to_owned() else {
-            return;
-        };
-        self.view_slot.gpu.set(Some(DmabufPaint {
-            fd,
+        let paint = DmabufPaint {
+            // CEF's until this returns.
+            fd: unsafe { BorrowedFd::borrow_raw(plane.fd) },
             offset: plane.offset + visible.y as u64 * plane.stride as u64 + visible.x as u64 * 4,
             stride: plane.stride,
             width: visible.width as u32,
             height: visible.height as u32,
-        }));
+        };
+        let mut sink = self.view_slot.gpu_sink.borrow_mut();
+        let Some(sink) = sink.as_mut() else {
+            bevy::log::warn_once!(
+                "gpu paint: no sink (Browsers::set_gpu_paint_sink); dropping frames"
+            );
+            return;
+        };
+        if sink.paint(self.webview, &paint) {
+            self.view_slot
+                .gpu
+                .set(Some(UVec2::new(paint.width, paint.height)));
+        }
     }
 
     #[cfg(target_os = "macos")]

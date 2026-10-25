@@ -48,7 +48,7 @@ pub mod prelude {
         CefSchemeRequest, CefSchemeResponse, CommandLineConfig, switches,
     };
     #[cfg(target_os = "linux")]
-    pub use bevy_cef_core::prelude::DmabufPaint;
+    pub use bevy_cef_core::prelude::{DmabufPaint, GpuPaintSink};
 }
 
 pub struct RunOnMainThread;
@@ -70,9 +70,10 @@ pub struct CefPlugin {
     /// wall-clock time. A flush also follows every main-frame load end in a profile webview.
     /// Defaults to 5 seconds.
     pub cookie_flush_interval: Duration,
-    /// Linux: CEF composites pages on the GPU and hands each frame over as a dmabuf
-    /// (`WebviewGpuPainted`) instead of copying its pixels to the CPU, for an app that shows
-    /// it straight from GPU memory. Adds the switches CEF's GPU path needs (X11 ozone, ANGLE
+    /// Linux: CEF composites pages on the GPU and lends each frame as a dmabuf to the app's
+    /// `GpuPaintSink` (`Browsers::set_gpu_paint_sink`), which copies it out on the GPU before
+    /// CEF takes it back (`WebviewGpuPainted` follows), instead of copying its pixels to the
+    /// CPU. Adds the switches CEF's GPU path needs (X11 ozone, ANGLE
     /// on Vulkan), so not with `ozone-platform=headless`. Off by default.
     pub gpu_paint: bool,
 }

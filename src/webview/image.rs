@@ -31,15 +31,15 @@ impl Plugin for ImageWebviewPlugin {
     }
 }
 
-/// A page painted on the GPU (`CefPlugin::gpu_paint`): `frame` is what `image` should show.
-/// The image is a size-carrying placeholder without pixels (the renderer must take the frame
-/// from GPU memory); it is marked modified each paint.
+/// A page painted on the GPU (`CefPlugin::gpu_paint`): the app's [`GpuPaintSink`] took a
+/// `size` frame for `image` while CEF lent it. The image is a size-carrying placeholder
+/// without pixels (the renderer shows the sink's copy); it changes only when the size does.
 #[cfg(target_os = "linux")]
-#[derive(Message, Debug)]
+#[derive(Message, Debug, Clone, Copy)]
 pub struct WebviewGpuPainted {
     pub webview: Entity,
     pub image: AssetId<Image>,
-    pub frame: DmabufPaint,
+    pub size: UVec2,
 }
 
 /// Each page's GPU frame to its webview's target image, which follows the frame's size.
@@ -51,31 +51,24 @@ fn paint_gpu_targets(
     mut painted: MessageWriter<WebviewPainted>,
     mut gpu: MessageWriter<WebviewGpuPainted>,
 ) {
-    for (webview, frame) in browsers.drain_gpu_paints() {
+    for (webview, size) in browsers.drain_gpu_paints() {
         let Ok(target) = targets.get(webview) else {
             continue;
         };
-        let Some(mut image) = images.get_mut(target.0.id()) else {
+        let Some(image) = images.get(target.0.id()) else {
             continue;
         };
-        if image.data.is_some()
-            || image.texture_descriptor.size.width != frame.width
-            || image.texture_descriptor.size.height != frame.height
-        {
-            let mut placeholder = Image::new_target_texture(
-                frame.width,
-                frame.height,
-                TextureFormat::Bgra8UnormSrgb,
-                None,
-            );
+        if image.data.is_some() || image.size() != size {
+            let mut placeholder =
+                Image::new_target_texture(size.x, size.y, TextureFormat::Bgra8UnormSrgb, None);
             placeholder.data = None;
-            *image = placeholder;
+            images.insert(target.0.id(), placeholder).ok();
         }
         painted.write(WebviewPainted { webview });
         gpu.write(WebviewGpuPainted {
             webview,
             image: target.0.id(),
-            frame,
+            size,
         });
     }
 }
