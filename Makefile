@@ -15,17 +15,17 @@ install-debug-render-process:
 
 setup-macos:
 	brew install cmake ninja
-	cargo install --locked export-cef-dir@154.5.0+154.0.34 --force
+	cargo install --locked export-cef-dir@156.2.0+156.0.14 --force
 	export-cef-dir --force "$(HOME)/.local/share/cef"
 	CARGO_PROFILE_RELEASE_STRIP=false cargo install --locked --path crates/bevy_cef_debug_render_process
 	cp "$(CARGO_BIN)/$(BIN)" "$(CEF_LIB)/$(BIN)"
 
 setup-windows:
-	cargo install --locked export-cef-dir@154.5.0+154.0.34 --force
+	cargo install --locked export-cef-dir@156.2.0+156.0.14 --force
 	export-cef-dir --force "$(USERPROFILE)/.local/share/cef"
 	cargo install --locked --path ./crates/bevy_cef_render_process --root "$(USERPROFILE)/.local/share/cef" --force
 
 setup-linux:
-	cargo install --locked export-cef-dir@154.5.0+154.0.34 --force
+	cargo install --locked export-cef-dir@156.2.0+156.0.14 --force
 	"$(CARGO_BIN)/export-cef-dir" --force "$(HOME)/.local/share/cef"
 	cargo install --locked --path ./crates/bevy_cef_render_process --root "$(HOME)/.local/share/cef" --force
