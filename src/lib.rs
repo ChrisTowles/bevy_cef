@@ -76,7 +76,7 @@ pub struct CefPlugin {
     /// `GpuPaintSink` (`Browsers::set_gpu_paint_sink`), which copies it out on the GPU before
     /// CEF takes it back (`WebviewGpuPainted` follows), instead of copying its pixels to the
     /// CPU. Adds the switches CEF's GPU path needs (Wayland ozone, ANGLE on GL/EGL), so not
-    /// with `ozone-platform=headless`. Off by default.
+    /// with `ozone-platform=headless`. On by default (Linux).
     ///
     /// Checked before CEF starts: without a reachable Wayland compositor it warns and pages
     /// paint on the CPU (no switches added), since Chromium would exit the app after failing to
@@ -93,7 +93,7 @@ impl Default for CefPlugin {
             custom_schemes: Default::default(),
             sandbox: Default::default(),
             cookie_flush_interval: Duration::from_secs(5),
-            gpu_paint: false,
+            gpu_paint: cfg!(target_os = "linux"),
         }
     }
 }
