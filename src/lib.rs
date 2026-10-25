@@ -75,13 +75,12 @@ pub struct CefPlugin {
     /// Linux: CEF composites pages on the GPU and lends each frame as a dmabuf to the app's
     /// `GpuPaintSink` (`Browsers::set_gpu_paint_sink`), which copies it out on the GPU before
     /// CEF takes it back (`WebviewGpuPainted` follows), instead of copying its pixels to the
-    /// CPU. Adds the switches CEF's GPU path needs (X11 ozone, ANGLE
-    /// on Vulkan), so not with `ozone-platform=headless`. Off by default.
+    /// CPU. Adds the switches CEF's GPU path needs (Wayland ozone, ANGLE on GL/EGL), so not
+    /// with `ozone-platform=headless`. Off by default.
     ///
-    /// Checked before CEF starts: without the X display, `libvulkan.so.1` beside libcef.so
-    /// (ANGLE loads Vulkan from there only) or a Vulkan device that exports dmabufs, it warns
-    /// and pages paint on the CPU (no switches added), since Chromium would exit the app after
-    /// failing to start its GPU process. `Browsers::gpu_paint` holds the effective value.
+    /// Checked before CEF starts: without a reachable Wayland compositor it warns and pages
+    /// paint on the CPU (no switches added), since Chromium would exit the app after failing to
+    /// start its GPU process. `Browsers::gpu_paint` holds the effective value.
     pub gpu_paint: bool,
 }
 
@@ -118,27 +117,18 @@ impl Plugin for CefPlugin {
         #[cfg(not(target_os = "linux"))]
         let gpu_paint = false;
         if gpu_paint {
-            // Chromium's GPU process on Wayland (or GL) cannot hand a native pixmap to its
-            // compositor on NVIDIA; X11 with ANGLE on Vulkan can.
-            // Chromium keeps only the last value of a repeated switch, so these replace the
-            // app's own `ozone-platform` / `use-angle` and join its `enable-features`.
+            // Only Wayland ozone with ANGLE on GL/EGL hands NVIDIA's tiled buffers over with the
+            // page in them: under X11 (XWayland) EGL rejects them and Vulkan leaves them empty,
+            // and Chromium refuses Vulkan on Wayland. Chromium keeps only the last value of a
+            // repeated switch, so these replace the app's own.
             let values = &mut command_line_config.switch_values;
-            for (name, value) in [("ozone-platform", "x11"), ("use-angle", "vulkan")] {
+            for (name, value) in [("ozone-platform", "wayland"), ("use-angle", "gl-egl")] {
                 if let Some(old) = values.iter().find(|(n, v)| *n == name && *v != value) {
                     warn!("gpu_paint: {name}={} replaced by {name}={value}", old.1);
                 }
                 values.retain(|(n, _)| *n != name);
                 values.push((name, value));
             }
-            let mut features = vec!["Vulkan,DefaultANGLEVulkan,VulkanFromANGLE"];
-            features.extend(
-                values
-                    .iter()
-                    .filter(|(n, _)| *n == "enable-features")
-                    .map(|(_, v)| *v),
-            );
-            values.retain(|(n, _)| *n != "enable-features");
-            values.push(("enable-features", features.join(",").leak()));
         }
         let effective_config =
             effective_command_line_config(&command_line_config, strip_no_zygote);

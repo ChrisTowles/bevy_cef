@@ -36,15 +36,23 @@ pub struct TextureSlot {
     pub(crate) gpu_sink: SharedGpuPaintSink,
 }
 
-/// A page frame in GPU memory (Linux `gpu_paint`): a linear BGRA dmabuf, `width` x `height`,
-/// rows `stride` bytes apart from `offset`. CEF lends it for the length of
+/// A page frame in GPU memory (Linux `gpu_paint`): a single-plane BGRA dmabuf of
+/// `coded_width` x `coded_height` texels laid out as DRM format `modifier` (tiled on NVIDIA,
+/// LINEAR elsewhere), its plane `size` bytes at `offset` with rows `stride` bytes apart; the page
+/// is its `width` x `height` texels at (`x`, `y`). CEF lends it for the length of
 /// `on_accelerated_paint` only: it draws a later frame into the same buffer once that returns.
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct DmabufPaint<'a> {
     pub fd: std::os::fd::BorrowedFd<'a>,
+    pub modifier: u64,
     pub offset: u64,
+    pub size: u64,
     pub stride: u32,
+    pub coded_width: u32,
+    pub coded_height: u32,
+    pub x: u32,
+    pub y: u32,
     pub width: u32,
     pub height: u32,
 }
@@ -324,12 +332,11 @@ impl ImplRenderHandler for RenderHandlerBuilder {
             return;
         }
         let Some(info) = info else { return };
-        // DRM_FORMAT_MOD_LINEAR: the consumer reads it as a plain pitched buffer.
+        // One plane in any modifier: the consumer imports it as an image laid out that way.
         if !matches!(
             info.format.as_ref(),
             cef_dll_sys::cef_color_type_t::CEF_COLOR_TYPE_BGRA_8888
         ) || info.plane_count != 1
-            || info.modifier != 0
         {
             bevy::log::error_once!(
                 "gpu paint: unsupported shared texture ({:?}, {} planes, modifier {:#x}); dropping frames",
@@ -342,19 +349,28 @@ impl ImplRenderHandler for RenderHandlerBuilder {
         let plane = &info.planes[0];
         // The page is the visible area of the (possibly padded) coded buffer.
         let visible = &info.extra.visible_rect;
+        let coded = &info.extra.coded_size;
         if plane.fd < 0
             || visible.width <= 0
             || visible.height <= 0
             || visible.x < 0
             || visible.y < 0
+            || visible.x + visible.width > coded.width
+            || visible.y + visible.height > coded.height
         {
             return;
         }
         let paint = DmabufPaint {
             // CEF's until this returns.
             fd: unsafe { BorrowedFd::borrow_raw(plane.fd) },
-            offset: plane.offset + visible.y as u64 * plane.stride as u64 + visible.x as u64 * 4,
+            modifier: info.modifier,
+            offset: plane.offset,
+            size: plane.size,
             stride: plane.stride,
+            coded_width: coded.width as u32,
+            coded_height: coded.height as u32,
+            x: visible.x as u32,
+            y: visible.y as u32,
             width: visible.width as u32,
             height: visible.height as u32,
         };
