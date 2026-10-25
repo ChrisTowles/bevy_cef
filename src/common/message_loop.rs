@@ -215,6 +215,9 @@ pub(crate) fn add_failed_startup(app: &mut App, error: CefStartupError, root: Op
         .init_resource::<CefKeyboardFilter>()
         .init_resource::<BeginFrameInterval>()
         .insert_non_send(RunOnMainThread);
+    // Read by apps that copy the dmabuf frames (zero's browser screens count paints with it).
+    #[cfg(target_os = "linux")]
+    app.add_message::<crate::prelude::WebviewGpuPainted>();
 
     // NOTE: `init_asset` panics without an `AssetServer`; the skipped plugins assume
     // `AssetPlugin` as well, but a failed start must not add a second panic.
@@ -616,6 +619,34 @@ mod tests {
             None,
         );
         app.add_systems(Startup, setup);
+
+        app.update();
+    }
+
+    /// Asserts that after a failed start, a system reading both paint messages runs.
+    ///
+    /// Case: an app counts `WebviewPainted` and (on Linux) `WebviewGpuPainted` frames while
+    /// another process holds the root cache directory, so the image plugin never ran.
+    #[test]
+    fn a_failed_start_registers_the_paint_messages() {
+        fn count(mut painted: MessageReader<WebviewPainted>) {
+            painted.read().count();
+        }
+        #[cfg(target_os = "linux")]
+        fn count_gpu(mut painted: MessageReader<crate::prelude::WebviewGpuPainted>) {
+            painted.read().count();
+        }
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        add_failed_startup(
+            &mut app,
+            CefStartupError::Initialize { exit_code: 24 },
+            None,
+        );
+        app.add_systems(Update, count);
+        #[cfg(target_os = "linux")]
+        app.add_systems(Update, count_gpu);
 
         app.update();
     }
