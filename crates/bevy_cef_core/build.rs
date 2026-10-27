@@ -226,20 +226,33 @@ mod linux {
         else {
             return;
         };
-        let dest = dst.join(RENDER_PROCESS_BINARY);
-        if dest.exists() {
-            let src_modified = fs::metadata(&binary).unwrap().modified().unwrap();
-            let dst_modified = fs::metadata(&dest).unwrap().modified().unwrap();
-            if dst_modified >= src_modified {
+        install(&binary, &dst.join(RENDER_PROCESS_BINARY));
+    }
+
+    /// Copies `src` to `dest` unless `dest` is already this copy of it (same size and mtime: the
+    /// copy takes the source's mtime). Not "dest is newer": CEF's archive keeps its build-date
+    /// mtimes, so a new CEF's files are older than the previous version's copies, which then
+    /// stayed and libcef refused the new wrapper ("unsupported CEF API version").
+    fn install(src: &Path, dest: &Path) {
+        let src_meta = fs::metadata(src).unwrap();
+        let src_modified = src_meta.modified().unwrap();
+        if let Ok(dst_meta) = fs::metadata(dest) {
+            if dst_meta.len() == src_meta.len() && dst_meta.modified().unwrap() == src_modified {
                 return;
             }
         }
-        // Replaced by rename: the old one may be running (text file busy).
-        let staged = dst.join(format!(".{RENDER_PROCESS_BINARY}.new"));
-        fs::copy(&binary, &staged).unwrap_or_else(|e| {
-            panic!("Failed to copy {:?} to {:?}: {}", binary, staged, e);
+        // Replaced by rename: the old one may be running (text file busy, or a mapped libcef.so).
+        let name = dest.file_name().unwrap().to_string_lossy();
+        let staged = dest.with_file_name(format!(".{name}.new"));
+        fs::copy(src, &staged).unwrap_or_else(|e| {
+            panic!("Failed to copy {:?} to {:?}: {}", src, staged, e);
         });
-        fs::rename(&staged, &dest).unwrap_or_else(|e| {
+        fs::File::options()
+            .write(true)
+            .open(&staged)
+            .and_then(|file| file.set_modified(src_modified))
+            .unwrap_or_else(|e| panic!("Failed to set the mtime of {:?}: {}", staged, e));
+        fs::rename(&staged, dest).unwrap_or_else(|e| {
             panic!("Failed to move {:?} to {:?}: {}", staged, dest, e);
         });
     }
@@ -261,17 +274,7 @@ mod linux {
                     copy_cef_runtime_files(&path, &dest_dir);
                 }
             } else if is_runtime_file(&path) {
-                let dest = dst.join(&file_name);
-                if dest.exists() {
-                    let src_modified = fs::metadata(&path).unwrap().modified().unwrap();
-                    let dst_modified = fs::metadata(&dest).unwrap().modified().unwrap();
-                    if dst_modified >= src_modified {
-                        continue;
-                    }
-                }
-                fs::copy(&path, &dest).unwrap_or_else(|e| {
-                    panic!("Failed to copy {:?} to {:?}: {}", path, dest, e);
-                });
+                install(&path, &dst.join(&file_name));
             }
         }
     }
