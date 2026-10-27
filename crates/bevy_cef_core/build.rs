@@ -1,9 +1,46 @@
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use std::{fs, path::Path};
+
 fn main() {
     #[cfg(target_os = "windows")]
     windows::copy_cef_files();
 
     #[cfg(target_os = "linux")]
     linux::copy_cef_files();
+}
+
+/// Copies `src` to `dest` unless `dest` is already this copy of it (same size and mtime: the
+/// copy takes the source's mtime). Not "dest is newer": CEF's archive keeps its build-date
+/// mtimes, so a new CEF's files are older than the previous version's copies, which then
+/// stayed and libcef refused the new wrapper ("unsupported CEF API version").
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn install(src: &Path, dest: &Path) {
+    let src_meta = fs::metadata(src).unwrap();
+    let src_modified = src_meta.modified().unwrap();
+    if let Ok(dst_meta) = fs::metadata(dest) {
+        if dst_meta.len() == src_meta.len() && dst_meta.modified().unwrap() == src_modified {
+            return;
+        }
+    }
+    // Replaced by rename: the old one may be running (text file busy, or a mapped libcef.so).
+    let name = dest.file_name().unwrap().to_string_lossy();
+    let staged = dest.with_file_name(format!(".{name}.new"));
+    // A hard link where the source is on the same filesystem (CEF is ~1.5 GB, placed twice: beside
+    // the binary and beside the examples), else a copy.
+    let _ = fs::remove_file(&staged);
+    if fs::hard_link(src, &staged).is_err() {
+        fs::copy(src, &staged).unwrap_or_else(|e| {
+            panic!("Failed to copy {:?} to {:?}: {}", src, staged, e);
+        });
+    }
+    fs::File::options()
+        .write(true)
+        .open(&staged)
+        .and_then(|file| file.set_modified(src_modified))
+        .unwrap_or_else(|e| panic!("Failed to set the mtime of {:?}: {}", staged, e));
+    fs::rename(&staged, dest).unwrap_or_else(|e| {
+        panic!("Failed to move {:?} to {:?}: {}", staged, dest, e);
+    });
 }
 
 #[cfg(target_os = "windows")]
@@ -89,17 +126,7 @@ mod windows {
             );
             return;
         };
-        let dest = dst.join(RENDER_PROCESS_BINARY);
-        if dest.exists() {
-            let src_modified = fs::metadata(&binary).unwrap().modified().unwrap();
-            let dst_modified = fs::metadata(&dest).unwrap().modified().unwrap();
-            if dst_modified >= src_modified {
-                return;
-            }
-        }
-        fs::copy(&binary, &dest).unwrap_or_else(|e| {
-            panic!("Failed to copy {:?} to {:?}: {}", binary, dest, e);
-        });
+        super::install(&binary, &dst.join(RENDER_PROCESS_BINARY));
     }
 
     fn copy_cef_runtime_files(src: &Path, dst: &Path) {
@@ -120,17 +147,7 @@ mod windows {
                 }
                 // Skip other directories (include/, cmake/, libcef_dll/)
             } else if is_runtime_file(&path) {
-                let dest = dst.join(&file_name);
-                if dest.exists() {
-                    let src_modified = fs::metadata(&path).unwrap().modified().unwrap();
-                    let dst_modified = fs::metadata(&dest).unwrap().modified().unwrap();
-                    if dst_modified >= src_modified {
-                        continue;
-                    }
-                }
-                fs::copy(&path, &dest).unwrap_or_else(|e| {
-                    panic!("Failed to copy {:?} to {:?}: {}", path, dest, e);
-                });
+                super::install(&path, &dst.join(&file_name));
             }
         }
     }
@@ -174,7 +191,11 @@ mod linux {
             .ok()
             .or_else(|| env::var("CEF_PATH").ok())
             .map(PathBuf::from)?;
-        println!("cargo:rerun-if-changed={}", cef_dir.display());
+        // One file that changes with every CEF, not the tree (cargo would stat all of it each build).
+        println!(
+            "cargo:rerun-if-changed={}",
+            cef_dir.join("libcef.so").display()
+        );
         if !cef_dir.exists() {
             println!(
                 "cargo:warning=CEF directory {:?} (from cef-dll-sys) not found. Skipping CEF file copy.",
@@ -226,35 +247,7 @@ mod linux {
         else {
             return;
         };
-        install(&binary, &dst.join(RENDER_PROCESS_BINARY));
-    }
-
-    /// Copies `src` to `dest` unless `dest` is already this copy of it (same size and mtime: the
-    /// copy takes the source's mtime). Not "dest is newer": CEF's archive keeps its build-date
-    /// mtimes, so a new CEF's files are older than the previous version's copies, which then
-    /// stayed and libcef refused the new wrapper ("unsupported CEF API version").
-    fn install(src: &Path, dest: &Path) {
-        let src_meta = fs::metadata(src).unwrap();
-        let src_modified = src_meta.modified().unwrap();
-        if let Ok(dst_meta) = fs::metadata(dest) {
-            if dst_meta.len() == src_meta.len() && dst_meta.modified().unwrap() == src_modified {
-                return;
-            }
-        }
-        // Replaced by rename: the old one may be running (text file busy, or a mapped libcef.so).
-        let name = dest.file_name().unwrap().to_string_lossy();
-        let staged = dest.with_file_name(format!(".{name}.new"));
-        fs::copy(src, &staged).unwrap_or_else(|e| {
-            panic!("Failed to copy {:?} to {:?}: {}", src, staged, e);
-        });
-        fs::File::options()
-            .write(true)
-            .open(&staged)
-            .and_then(|file| file.set_modified(src_modified))
-            .unwrap_or_else(|e| panic!("Failed to set the mtime of {:?}: {}", staged, e));
-        fs::rename(&staged, dest).unwrap_or_else(|e| {
-            panic!("Failed to move {:?} to {:?}: {}", staged, dest, e);
-        });
+        super::install(&binary, &dst.join(RENDER_PROCESS_BINARY));
     }
 
     fn copy_cef_runtime_files(src: &Path, dst: &Path) {
@@ -274,7 +267,7 @@ mod linux {
                     copy_cef_runtime_files(&path, &dest_dir);
                 }
             } else if is_runtime_file(&path) {
-                install(&path, &dst.join(&file_name));
+                super::install(&path, &dst.join(&file_name));
             }
         }
     }
