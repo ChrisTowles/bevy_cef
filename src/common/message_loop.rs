@@ -48,6 +48,38 @@ impl CefStartupError {
     }
 }
 
+/// The live process that holds the profile at `root_cache_path`, as "pid N (command line)".
+///
+/// CEF keeps a `SingletonLock` symlink in the profile whose target is `<host>-<pid>` of the
+/// browser process that owns it. `None` when there is no lock, it is not a pid, or that process
+/// is gone (a stale lock does not make `cef_initialize` fail).
+pub fn profile_holder(root_cache_path: &str) -> Option<String> {
+    let lock =
+        std::fs::read_link(std::path::Path::new(root_cache_path).join("SingletonLock")).ok()?;
+    let pid = lock_pid(lock.to_str()?)?;
+    let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let cmdline = String::from_utf8_lossy(&cmdline).replace('\0', " ");
+    Some(format!("pid {pid} ({})", cmdline.trim()))
+}
+
+/// The pid in a `SingletonLock` target, `<host>-<pid>`.
+fn lock_pid(target: &str) -> Option<u32> {
+    target.rsplit_once('-')?.1.parse().ok()
+}
+
+#[cfg(test)]
+mod profile_holder_tests {
+    use super::lock_pid;
+
+    #[test]
+    fn the_pid_is_after_the_last_dash_of_the_lock_target() {
+        assert_eq!(lock_pid("pop-os-751889"), Some(751889));
+        assert_eq!(lock_pid("host-12"), Some(12));
+        assert_eq!(lock_pid("nopid"), None);
+        assert_eq!(lock_pid("host-x"), None);
+    }
+}
+
 impl std::fmt::Display for CefStartupError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

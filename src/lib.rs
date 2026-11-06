@@ -174,6 +174,22 @@ impl Plugin for CefPlugin {
         };
         if let Err(e) = message_loop.start(app) {
             error!("bevy_cef: CEF failed to start: {e}");
+            if e.is_root_in_use() {
+                let holder = self
+                    .root_cache_path
+                    .as_deref()
+                    .and_then(common::profile_holder);
+                match holder {
+                    Some(holder) => error!(
+                        "bevy_cef: the profile is held by live {holder}: stop it, or give this \
+                         process its own root_cache_path"
+                    ),
+                    None => error!(
+                        "bevy_cef: the profile is in use but its SingletonLock names no live \
+                         process"
+                    ),
+                }
+            }
             add_failed_startup(app, e, self.root_cache_path.clone());
             return;
         }
